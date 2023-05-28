@@ -1,5 +1,10 @@
 #include "Render_System.h"
 
+#ifdef _DEBUG
+#include <d3d12sdklayers.h>
+#endif // _DEBUG
+
+
 void GetHardwareAdapter(IDXGIFactory4* pFactory, IDXGIAdapter1** ppAdapter)
 {
 	*ppAdapter = nullptr;
@@ -23,25 +28,76 @@ void GetHardwareAdapter(IDXGIFactory4* pFactory, IDXGIAdapter1** ppAdapter)
 	}
 }
 
-D3DApp::D3DApp(HINSTANCE hInstance)
+RenderSystem::RenderSystem(HINSTANCE _hInstance, HWND _hWnd)
 {
+	this->m_hAppInstance = _hInstance;
+	this->m_hMainWnd = _hWnd;
+	this->m_Device = nullptr;
+	this->m_CommandQueue = nullptr;
+	this->m_SwapChain = nullptr;
+	this->m_rootSignature = nullptr;
+	this->m_RTVHeap = nullptr;
+	for (size_t i = 0; i < FrameCount; i++)
+	{
+		this->m_RenderTarget[i] = nullptr;
+	}
+	this->m_DepthStencilBuffer = nullptr;
+	this->m_CommandAllocator = nullptr;
+	this->m_CommandList = nullptr;
+	this->m_pipelineState = nullptr;
+	this->m_Fence = nullptr;
 
+	m_FenceValue = NULL;
+
+
+	m_vertexBuffer = nullptr;
+	ZeroMemory(&m_vertexBufferView, sizeof(D3D12_VERTEX_BUFFER_VIEW));
+	
+
+	m_frameIndex = NULL;
+	m_fenceEvent = NULL;
+	GetWindowRect(m_hMainWnd, &m_ScissorRect);
+	m_ClientWidth = m_ScissorRect.right - m_ScissorRect.left;
+	m_ClientHeight = m_ScissorRect.bottom - m_ScissorRect.top;
+	m_CurrentBackBufferIndex = NULL;
+	m_RTVDescriptorSize = NULL;
+
+	ZeroMemory(&m_Viewport, sizeof(D3D12_VIEWPORT));
+	
+
+	m_sMainWindowCaption.clear();
 }
 
-D3DApp::~D3DApp()
+RenderSystem::~RenderSystem()
 {
+	this->m_Device->Release();
+	this->m_CommandQueue->Release();
+	this->m_SwapChain->Release();
+	this->m_rootSignature->Release();
+	this->m_RTVHeap->Release();
+	for (size_t i = 0; i < FrameCount; i++)
+	{
+		this->m_RenderTarget[i]->Release();
+	}
+	this->m_DepthStencilBuffer->Release();
+	this->m_CommandAllocator->Release();
+	this->m_CommandList->Release();
+	this->m_pipelineState->Release();
+	this->m_Fence->Release();
+	m_vertexBuffer->Release();
 }
 
-HRESULT D3DApp::Initialize()
+//Called to initialize all components of directx
+HRESULT RenderSystem::Initialize()
 {
 	HRESULT hvalue;
 
-	hvalue = this->InitializePipeline();
+ 	hvalue = this->InitializePipeline();
 
 	return hvalue;
 }
 
-HRESULT D3DApp::InitializePipeline()
+HRESULT RenderSystem::InitializePipeline()
 {
 	HRESULT hvalue;
 
@@ -55,7 +111,7 @@ HRESULT D3DApp::InitializePipeline()
 	else { return hvalue; }
 #endif // defined(_DEBUG)
 
-	
+
 
 
 	//Create the device
@@ -65,8 +121,8 @@ HRESULT D3DApp::InitializePipeline()
 	{
 		ComPtr<IDXGIAdapter1> hardwareAdapter;
 		GetHardwareAdapter(factory.Get(), &hardwareAdapter);
-		
-	
+
+
 		hvalue = D3D12CreateDevice(hardwareAdapter.Get(), D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&m_Device));
 		if (FAILED(hvalue))
 		{
@@ -74,7 +130,7 @@ HRESULT D3DApp::InitializePipeline()
 		}
 	}
 	else { return hvalue; }
-	
+
 	//Create the command queue
 	D3D12_COMMAND_QUEUE_DESC queueDesc{ D3D12_COMMAND_LIST_TYPE_DIRECT,D3D12_COMMAND_QUEUE_FLAG_NONE };
 	hvalue = m_Device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&m_CommandQueue));
@@ -82,7 +138,7 @@ HRESULT D3DApp::InitializePipeline()
 	{
 		return hvalue;
 	}
-	
+
 	//Create the swap chain
 	DXGI_SWAP_CHAIN_DESC swapchain_desc{};
 	swapchain_desc.BufferCount = this->FrameCount;
@@ -91,6 +147,7 @@ HRESULT D3DApp::InitializePipeline()
 	swapchain_desc.BufferDesc.Height = this->m_ClientHeight;
 	swapchain_desc.BufferDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 	swapchain_desc.Windowed = true;
+	swapchain_desc.OutputWindow = m_hMainWnd;
 	swapchain_desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
 	swapchain_desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
 
@@ -114,20 +171,26 @@ HRESULT D3DApp::InitializePipeline()
 	else { return hvalue; }
 
 	//Create frame resources
-	
+
 	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = m_RTVHeap->GetCPUDescriptorHandleForHeapStart();
-	for (size_t i = 0; i < FrameCount; i++)
+	for (UINT i = 0; i < FrameCount; i++)
 	{
 		hvalue = m_SwapChain->GetBuffer(i, IID_PPV_ARGS(&m_RenderTarget[i]));
 		if (SUCCEEDED(hvalue))
 		{
-			m_Device->CreateRenderTargetView(m_RenderTarget[i].Get(), nullptr,  rtvHandle);
-			rtvHandle.ptr = SIZE_T(INT64(rtvHandle.ptr) + INT64(1) * INT64(m_RTVDescriptorSize));
+			m_Device->CreateRenderTargetView(m_RenderTarget[i].Get(), nullptr, rtvHandle);
+			rtvHandle.ptr = SIZE_T(INT64(rtvHandle.ptr) + INT64(i+1) * INT64(m_RTVDescriptorSize));
 		}
+		else return hvalue;
 	}
 
 	//Create a command allocator
+	hvalue = m_Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_BUNDLE, IID_PPV_ARGS(&m_CommandAllocator));
+	if (FAILED(hvalue))
+		return hvalue;
 
+	//Release any pointers not needed.
+	factory->Release();
 
 	return hvalue;
 }

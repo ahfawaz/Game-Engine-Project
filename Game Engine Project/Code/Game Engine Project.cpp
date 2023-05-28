@@ -13,7 +13,7 @@ WCHAR szWindowClass[MAX_LOADSTRING];            // the main window class name
 
 // Forward declarations of functions included in this code module:
 ATOM                MyRegisterClass(HINSTANCE hInstance);
-BOOL                InitInstance(HINSTANCE, int);
+BOOL                InitInstance(HINSTANCE, int, HWND&);
 LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
 
@@ -26,17 +26,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     UNREFERENCED_PARAMETER(lpCmdLine);
 
     //Local Variables for the system.
-    
+    HRESULT hResult;
+    HWND hWnd;
 
-    //Create the systems for the engine
-    MessageSystem* msg_system = new MessageSystem;
-    MemoryManager* mem_Manager = new MemoryManager;
-
-    //Systems initializations
-    mem_Manager->Initialize();
-
-    //Message System is always initialized last.
-    msg_system->Initialize(mem_Manager);
 
     // Initialize global strings
     LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
@@ -44,7 +36,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     MyRegisterClass(hInstance);
 
     // Perform application initialization:
-    if (!InitInstance (hInstance, nCmdShow))
+    if (!InitInstance (hInstance, nCmdShow, hWnd))
     {
         return FALSE;
     }
@@ -52,6 +44,23 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_GAMEENGINEPROJECT));
 
     MSG msg = {};
+
+    ///Begin Loading the game engine
+    //Create the systems for the engine
+    MessageSystem* msg_system = new MessageSystem;
+    MemoryManager* mem_Manager = new MemoryManager;
+    RenderSystem* render_system = new RenderSystem(hInstance, hWnd);
+
+    //Systems initializations
+    mem_Manager->Initialize();
+    hResult = render_system->Initialize();
+    if (FAILED(hResult))
+    {
+        HRESULT_CODE(hResult);
+    }
+
+    //Message System is always initialized last.
+    msg_system->Initialize(mem_Manager);
 
     // Main message loop:
     //while (GetMessage(&msg, nullptr, 0, 0))
@@ -105,20 +114,20 @@ ATOM MyRegisterClass(HINSTANCE hInstance)
 //        In this function, we save the instance handle in a global variable and
 //        create and display the main program window.
 //
-BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
+BOOL InitInstance(HINSTANCE hInstance, int nCmdShow, HWND& _hWnd)
 {
    hInst = hInstance; // Store instance handle in our global variable
 
-   HWND hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW,
+   _hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW,
       CW_USEDEFAULT, 0, CW_USEDEFAULT, 0, nullptr, nullptr, hInstance, nullptr);
 
-   if (!hWnd)
+   if (!_hWnd)
    {
       return FALSE;
    }
 
-   ShowWindow(hWnd, nCmdShow);
-   UpdateWindow(hWnd);
+   ShowWindow(_hWnd, nCmdShow);
+   UpdateWindow(_hWnd);
 
    return TRUE;
 }
